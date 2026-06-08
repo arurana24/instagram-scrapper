@@ -20,12 +20,18 @@ def extract_shortcode(url):
 def fetch_all_public_metrics(shortcode, original_url):
     if not shortcode:
         return {
-            "Reel ID": "N/A", "Username": "N/A", "Likes": 0, "Comments": 0, 
-            "Views": 0, "Product Type": "N/A", "Status": "Invalid Link"
+            "Reel ID": "N/A", "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
+            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Invalid Link"
         }
     try:
-        time.sleep(random.uniform(0.4, 0.8))
+        # Organic staggered pacing to keep your network secure
+        time.sleep(random.uniform(0.5, 1.0))
         post = instaloader.Post.from_shortcode(L.context, shortcode)
+        
+        # Get public profile level metrics natively
+        profile = post.owner_profile
+        full_name = profile.full_name if profile.full_name else "No Public Name"
+        followers = profile.followers
         
         likes_value = post.likes
         if likes_value == -1:
@@ -34,16 +40,18 @@ def fetch_all_public_metrics(shortcode, original_url):
         return {
             "Reel ID": shortcode,
             "Username": post.owner_username,
+            "Full Name": full_name,
+            "Followers": followers,
             "Likes": likes_value,
             "Comments": post.comments,
             "Views": post.video_view_count if post.is_video else 0,
             "Product Type": post.typename if post.typename else "Unknown",
             "Status": "Success"
         }
-    except Exception:
+    except Exception as e:
         return {
-            "Reel ID": shortcode, "Username": "N/A", "Likes": 0, "Comments": 0, 
-            "Views": 0, "Product Type": "N/A", "Status": "Error/Private"
+            "Reel ID": shortcode, "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
+            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Error/Private"
         }
 
 # ==========================================
@@ -72,6 +80,7 @@ with col_right:
     
     with tab1:
         inc_basic = st.checkbox("Reel ID & Username Handle", value=True)
+        inc_profiles = st.checkbox("Auto-Scrape Full Name & Followers Count", value=True)
         inc_likes_comments = st.checkbox("Likes & Comments Count", value=True)
         inc_views_type = st.checkbox("Views Count & Product Type", value=True)
         inc_er = st.checkbox("Auto-Calculate ER% ((Likes + Comments) / Views)", value=True)
@@ -80,7 +89,6 @@ with col_right:
         
     with tab2:
         st.caption("Check these to insert empty structural columns ready for backend campaign logging.")
-        inc_profiles = st.checkbox("Owner Full Name & Followers Tracker", value=False)
         inc_reach_metrics = st.checkbox("Reach, Impressions, & Shares Tracker", value=False)
         inc_historical = st.checkbox("CPE, VTR (Last 5 Posts) & Posting Frequency", value=False)
 
@@ -101,7 +109,7 @@ if uploaded_file is not None:
             results_map = {}
             total_rows = len(df)
             
-            status_text.text("⚡ Spinning up parallel background workers...")
+            status_text.text("⚡ Spinning up parallel background profile workers...")
             
             with ThreadPoolExecutor(max_workers=5) as executor:
                 future_to_row = {
@@ -116,8 +124,8 @@ if uploaded_file is not None:
                         results_map[row_idx] = future.result()
                     except Exception:
                         results_map[row_idx] = {
-                            "Reel ID": "Error", "Username": "N/A", "Likes": 0, "Comments": 0, 
-                            "Views": 0, "Product Type": "N/A", "Status": "Thread Fail"
+                            "Reel ID": "Error", "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
+                            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Thread Fail"
                         }
                     
                     completed += 1
@@ -125,13 +133,15 @@ if uploaded_file is not None:
                     status_text.text(f"🔄 Processing rows: {completed}/{total_rows}...")
 
             # Parse array lists
-            reel_ids, usernames, likes, comments, views, products, status_list = [], [], [], [], [], [], []
+            reel_ids, usernames, full_names, followers_list, likes, comments, views, products, status_list = [], [], [], [], [], [], [], [], []
             er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
             
             for i in range(total_rows):
                 res = results_map.get(i)
                 reel_ids.append(res["Reel ID"])
                 usernames.append(res["Username"])
+                full_names.append(res["Full Name"])
+                followers_list.append(res["Followers"])
                 likes.append(res["Likes"])
                 comments.append(res["Comments"])
                 views.append(res["Views"])
@@ -172,13 +182,13 @@ if uploaded_file is not None:
                         cpv_list.append("N/A")
                         cpe_list.append("N/A")
 
-            # 🛠️ Append Generated Data Columns (Row-for-Row Matching)
+            # 🛠️ Append Generated Data Columns
             if inc_basic:
                 df['Reel ID'] = reel_ids
                 df['Owner Username'] = usernames
             if inc_profiles:
-                df['Owner Full Name'] = ""
-                df['Followers Count'] = ""  # Clean independent column layout structure
+                df['Owner Full Name'] = full_names
+                df['Followers Count'] = followers_list
             if inc_likes_comments:
                 df['Likes Count'] = likes
                 df['Comments Count'] = comments
@@ -206,11 +216,9 @@ if uploaded_file is not None:
             
             status_text.success("🎉 Custom Marketing Performance Sheet Built Successfully!")
             
-            # Interactive Data Preview Frame
             st.markdown("### 👀 Preview Output Structure")
             st.dataframe(df.head(5))
             
-            # Binary stream handler
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
