@@ -26,7 +26,7 @@ def fetch_all_public_metrics(shortcode, original_url):
             "Status": "Invalid Link"
         }
     try:
-        # Organic delay to safeguard your network execution
+        # Organic delay to safeguard network execution
         time.sleep(random.uniform(0.4, 0.8))
         post = instaloader.Post.from_shortcode(L.context, shortcode)
         
@@ -69,33 +69,56 @@ def fetch_all_public_metrics(shortcode, original_url):
 # ==========================================
 st.set_page_config(page_title="Public Reel Analytics", page_icon="🎥", layout="wide")
 
-st.title("🎥 Public Instagram Reel & Post Extractor")
-st.markdown("Upload your tracking sheets to compile comprehensive public metadata and performance metrics natively.")
+st.title("🎥 Custom Public Instagram Performance Tracker")
+st.markdown("Upload your tracking sheets, select your data configuration layout using the checkboxes below, and pull metrics natively.")
 
 # Sidebar Configuration
 st.sidebar.header("⚙️ Configuration Matrix")
 url_column = st.sidebar.text_input("Link Column Header Name:", value="Video Links")
 
-# Data Ingestion Layout
-uploaded_file = st.file_uploader("Choose your input Excel file (.xlsx)", type=["xlsx"])
+# UI Layout Columns for Inputs & Checkboxes
+col_left, col_right = st.columns([1, 1])
+
+with col_left:
+    st.markdown("### 📥 1. Data Ingestion")
+    uploaded_file = st.file_uploader("Choose your input Excel file (.xlsx)", type=["xlsx"])
+    
+with col_right:
+    st.markdown("### 🛠️ 2. Select Features to Include")
+    
+    tab1, tab2 = st.tabs(["🚀 Auto-Scraped Public Metrics", "📊 Private Placeholder Columns"])
+    
+    with tab1:
+        inc_id_url = st.checkbox("Reel ID & Reel URL Mapping", value=True)
+        inc_username = st.checkbox("Owner Username Handle", value=True)
+        inc_likes = st.checkbox("Likes Count", value=True)
+        inc_comments = st.checkbox("Comments Count", value=True)
+        inc_views = st.checkbox("Video Views and Play Count", value=True)
+        inc_metadata = st.checkbox("Hashtags, Mentions & Tagged Users lists", value=True)
+        inc_type = st.checkbox("Product Type (Video/Carousel/Image)", value=True)
+        
+    with tab2:
+        st.caption("Check these to insert formatted empty tracking slots for metrics that require backend panel inputs.")
+        inc_fullname = st.checkbox("Owner Full Name Column", value=False)
+        inc_shares = st.checkbox("Shares Count Column", value=False)
 
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
-    st.info(f"📋 Dataset Loaded: Found {len(df)} tracking links ready for extraction.")
+    st.info(f"📋 Dataset Loaded: Found {len(df)} tracking links ready for customization.")
     
-    if st.button("🚀 Run Public Metrics Engine", type="primary"):
+    if st.button("🚀 Run Performance Matrix Pipeline", type="primary"):
         if url_column not in df.columns:
             st.error(f"❌ Could not find column '{url_column}'. Please check your column heading name.")
         else:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # Extract shortcodes to maps
+            # Map temporary keys
             df['Shortcode_Temp'] = df[url_column].apply(extract_shortcode)
             results_map = {}
             total_rows = len(df)
             
-            status_text.text("⚡ Activating multi-threaded extraction pipelines...")
+            status_text.text("⚡ Spinning up parallel background workers...")
             
             # Concurrent processing framework
             with ThreadPoolExecutor(max_workers=5) as executor:
@@ -118,9 +141,9 @@ if uploaded_file is not None:
                     
                     completed += 1
                     progress_bar.progress(completed / total_rows)
-                    status_text.text(f"🔄 Processing row items: {completed}/{total_rows}...")
+                    status_text.text(f"🔄 Processing rows: {completed}/{total_rows}...")
 
-            # Reconstruct variables array chronological alignments
+            # Dynamic list initialization
             reel_ids, reel_urls, usernames, likes, comments, views = [], [], [], [], [], []
             hashtags_list, mentions_list, tagged_list, products, status_list = [], [], [], [], []
             
@@ -138,38 +161,52 @@ if uploaded_file is not None:
                 products.append(res["Product Type"])
                 status_list.append(res["Status"])
 
-            # Map generated metrics directly onto output frame
-            df['Reel ID'] = reel_ids
-            df['Reel URL'] = reel_urls
-            df['Owner Username'] = usernames
-            df['Owner Full Name'] = ""  # Clean placeholder framework column
-            df['Likes Count'] = likes
-            df['Shares Count'] = ""  # Clean placeholder framework column
-            df['Comments Count'] = comments
-            df['Video Views and Play Count'] = views
-            df['Hashtags'] = hashtags_list
-            df['Mentions'] = mentions_list
-            df['Tagged Users'] = tagged_list
-            df['Product Type'] = products
+            # 🛠️ Append Columns Natively based on Checkbox Selections
+            if inc_id_url:
+                df['Reel ID'] = reel_ids
+                df['Reel URL'] = reel_urls
+            if inc_username:
+                df['Owner Username'] = usernames
+                
+            if inc_fullname:
+                df['Owner Full Name'] = ""  # Structured Placeholder Column
+                
+            if inc_likes:
+                df['Likes Count'] = likes
+                
+            if inc_shares:
+                df['Shares Count'] = ""     # Structured Placeholder Column
+                
+            if inc_comments:
+                df['Comments Count'] = comments
+            if inc_views:
+                df['Video Views and Play Count'] = views
+            if inc_metadata:
+                df['Hashtags'] = hashtags_list
+                df['Mentions'] = mentions_list
+                df['Tagged Users'] = tagged_list
+            if inc_type:
+                df['Product Type'] = products
+                
             df['Extraction_Status'] = status_list
             
-            # Clean temporary processing keys
+            # Housekeeping
             df.drop(columns=['Shortcode_Temp'], inplace=True, errors='ignore')
             
-            status_text.success("🎉 Matrix Sheet Compiled Cleanly!")
+            status_text.success("🎉 Custom Matrix Built Successfully!")
             
-            # Display interactive dataframe presentation segment
-            st.markdown("### 👀 Preview Processed Output Matrix")
+            # Interactive Spreadsheet Preview Component
+            st.markdown("### 👀 Preview Processed Output Layout")
             st.dataframe(df.head(5))
             
-            # Map storage vectors out to virtual file stream buffer
+            # Convert memory stack blocks out to downloadable binary data stream
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
             
             st.download_button(
-                label="📥 Download Public Metrics Spreadsheet",
+                label="📥 Download Custom Reports Sheet",
                 data=buffer.getvalue(),
-                file_name="instagram_public_metrics_report.xlsx",
+                file_name="instagram_custom_metrics_report.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
