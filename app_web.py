@@ -69,7 +69,7 @@ def fetch_apify_demographics(username, token):
     
     try:
         response = requests.post(url, json=payload, timeout=30)
-        if response.status_code == 200 or response.status_code == 21] :
+        if response.status_code == 200 or response.status_code == 21 :
             data = response.json()
             if data and isinstance(data, list) and len(data) > 0:
                 profile = data[0]
