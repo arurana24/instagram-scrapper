@@ -1,15 +1,111 @@
-import streamlit as st
-import pandas as pd
-import instaloader
+import os
 import re
 import time
 import random
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import base64
+import pandas as pd
+import streamlit as st
+import instaloader
 import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Initialize Instaloader
 L = instaloader.Instaloader()
 
+# ==========================================
+# CUSTOM THEME & DESIGN CONFIGURATION
+# ==========================================
+st.set_page_config(page_title="Public Reel Analytics", page_icon="🎥", layout="wide")
+
+# Helper function to convert local image to secure Base64 for HTML injection
+def get_base64_image(image_path):
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    return None
+
+# Check for both jpeg and jpg variations safely
+logo_base64 = get_base64_image("logo.jpeg") or get_base64_image("logo.jpg")
+
+# Advanced CSS Injection for Turquoise Canvas & Dark Turquoise (#008080) Components
+st.markdown(
+    """
+    <style>
+    /* Global application background canvas match */
+    .stApp {
+        background-color: #81d8d0;
+    }
+    h1, h2, h3, p, label, .stMarkdown, .stText, [data-testid="stHeader"] {
+        color: #1e293b !important;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    /* 🛠️ DARK TURQUOISE BUTTONS & SUBMISSIONS */
+    div.stButton > button, div.stDownloadButton > button {
+        background-color: #008080 !important;
+        color: #ffffff !important;
+        border-radius: 6px;
+        border: 1px solid #005a5a !important;
+        padding: 0.6rem 2.5rem;
+        font-weight: bold;
+        font-size: 16px;
+    }
+    div.stButton > button:hover, div.stDownloadButton > button:hover {
+        background-color: #005a5a !important;
+        color: #ffffff !important;
+    }
+    
+    /* 🛠️ PROGRESS TRACKERS & BARS CONTRAST MATCH */
+    .stProgress > div > div > div > div {
+        background-color: #008080 !important;
+    }
+    
+    /* 🛠️ STYLING FORM WIDGET CHECKBOXES */
+    .stCheckbox label p {
+        color: #1e293b !important;
+    }
+    
+    /* 🛠️ BULLETPROOF INGESTION DRAGZONE OVERRIDES */
+    .stFileUploader section {
+        background-color: rgba(255, 255, 255, 0.5) !important;
+        border: 2px dashed #008080 !important;
+    }
+    .stFileUploader button {
+        background-color: #008080 !important;
+        color: #ffffff !important;
+        border: 1px solid #005a5a !important;
+    }
+    
+    /* Forces the text within instructions to be clean and legible */
+    .stFileUploader [data-testid="stFileUploadDropzoneInstructions"] div, 
+    .stFileUploader [data-testid="stWidgetLabel"] p,
+    .stFileUploader span,
+    .stFileUploader small {
+        color: #000000 !important;
+    }
+    
+    /* 🛠️ CENTERED BOTTOM LOGO CONTAINER STYLE */
+    .bottom-logo-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        margin-top: 50px;
+        padding-top: 20px;
+        margin-bottom: 20px;
+    }
+    .bottom-logo-container img {
+        width: 140px;
+        border-radius: 6px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ==========================================
+# CORE EXTRACTION DATA ENGINES
+# ==========================================
 def extract_shortcode(url):
     if pd.isna(url) or not isinstance(url, str):
         return None
@@ -57,8 +153,6 @@ def fetch_all_public_metrics(shortcode, original_url):
 # ==========================================
 # STREAMLIT USER INTERFACE
 # ==========================================
-st.set_page_config(page_title="Public Reel Analytics", page_icon="🎥", layout="wide")
-
 st.title("🎥 Advanced Influencer Marketing Metric Extraper")
 st.markdown("Upload campaign tracker sheets, configure checkboxes for customized performance frameworks, and output clean analytical tables.")
 
@@ -229,3 +323,9 @@ if uploaded_file is not None:
                 file_name="instagram_marketing_dashboard.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+# ==========================================
+# BRANDING LOGO COMPONENT (BOTTOM MIDDLE)
+# ==========================================
+if logo_base64:
+    st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
