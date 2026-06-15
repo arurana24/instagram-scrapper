@@ -21,15 +21,12 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-# Securely fetch credentials from your Streamlit Secrets Manager
 ACCESS_TOKEN = st.secrets["META_ACCESS_TOKEN"]
 INSTAGRAM_ACCOUNT_ID = st.secrets["INSTAGRAM_ACCOUNT_ID"]
 BASE_URL = "https://graph.facebook.com/v22.0"
 
-# Initialize Instaloader framework out of local loops
 L = instaloader.Instaloader()
 
-# Helper function to convert local image to secure Base64 for HTML injection
 def get_base64_image(image_path):
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
@@ -38,7 +35,7 @@ def get_base64_image(image_path):
 
 logo_base64 = get_base64_image("logo.jpeg") or get_base64_image("logo.jpg")
 
-# Advanced CSS Injection for Turquoise Design Canvas
+# Advanced CSS Styling Configuration
 st.markdown(
     """
     <style>
@@ -98,7 +95,6 @@ def extract_username_from_url(url):
     return match.group(1) if match else url_clean
 
 def fetch_creator_metadata_via_api(username):
-    """ Meta API Framework: Returns root profile follower configurations """
     if not username:
         return {"followers": 0, "full_name": "No Public Name", "status": "Invalid Handle"}
     url = f"{BASE_URL}/{INSTAGRAM_ACCOUNT_ID}"
@@ -107,14 +103,13 @@ def fetch_creator_metadata_via_api(username):
     try:
         res = requests.get(url, params=params).json()
         if "error" in res:
-            return {"followers": 0, "full_name": "No Public Name", "status": f"API Error"}
+            return {"followers": 0, "full_name": "No Public Name", "status": "API Error"}
         discovery = res.get("business_discovery", {})
         return {"followers": discovery.get("followers_count", 0), "full_name": discovery.get("name", "No Public Name"), "status": "Success"}
     except Exception:
         return {"followers": 0, "full_name": "No Public Name", "status": "Connection Fail"}
 
 def fetch_creator_timeline_via_api(username, profile_url):
-    """ Meta API Framework: Retrieves structural data layout & deep timeline nodes """
     if not username:
         return {"followers": 0, "status": "Invalid Username", "reels_to_job": [], "skipped_pinned": []}
     url = f"{BASE_URL}/{INSTAGRAM_ACCOUNT_ID}"
@@ -169,8 +164,7 @@ def fetch_creator_timeline_via_api(username, profile_url):
     except Exception:
         return {"followers": 0, "status": "API Exception Connection", "reels_to_job": [], "skipped_pinned": []}
 
-def fetch_single_reel_views_worker(job, ig_user=None, ig_pass=None):
-    """ Tail-End Instaloader Sniper: Target-harvests exact public web play views inside background threads """
+def fetch_single_reel_views_worker(job):
     permalink = job["permalink"]
     try:
         shortcode_match = re.search(r'/reel/([^/]+)/|/p/([^/]+)/', permalink)
@@ -182,7 +176,6 @@ def fetch_single_reel_views_worker(job, ig_user=None, ig_pass=None):
         coauthors = [author.username for author in post.get_coauthors()] if hasattr(post, 'get_coauthors') else []
         status = "Skipped: Collaboration" if len(coauthors) > 1 else "Success"
         
-        # Pull details if it's Tool 1 passing blank elements
         job.update({"Views": views, "Status": status, "Shortcode": code})
         if "Timestamp" not in job or job["Timestamp"] == "N/A":
             job["Timestamp"] = post.date_utc.strftime("%Y-%m-%d %H:%M:%S") if post.date_utc else "N/A"
@@ -198,30 +191,26 @@ def fetch_single_reel_views_worker(job, ig_user=None, ig_pass=None):
 # ==========================================
 # STREAMLIT USER INTERFACE VIEW LAYER
 # ==========================================
-st.title("🎥 Campaign Metric Production Matrix")
+st.title("Campaign Metric Production Matrix")
 engine_selection = st.radio(
-    "🧭 Select Active Analytical Tool Module:",
-    ["🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker", "📊 Tool 2: Batch Handle Timeline Harvesting Engine"],
+    "Select Optimization Track Mode:",
+    ["Campaign Tracker", "Creator Auditor"],
     horizontal=True
 )
 st.markdown("---")
 
-# Active Sidebar Layout configurations
-st.sidebar.header("⚙️ Configuration Hub")
-ig_username = st.sidebar.text_input("Instagram Username (Optional Burner):", value="")
-ig_password = st.sidebar.text_input("Instagram Password (Optional Burner):", type="password", value="")
-
 # ==========================================
-# RUN MODULE TOOL 1
+# MODULE TRACK MODE: CAMPAIGN TRACKER
 # ==========================================
-if engine_selection == "🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker":
-    url_column = st.sidebar.text_input("Link Column Header Name:", value="Video Links")
+if engine_selection == "Campaign Tracker":
     col_left, col_right = st.columns(2)
     with col_left:
-        st.markdown("### 📥 1. Ingest Video Links Document")
-        uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type=["xlsx"], key="tool1_file")
+        st.markdown("### 1. Data Ingestion")
+        uploaded_file = st.file_uploader("Upload Excel document (.xlsx)", type=["xlsx"], key="t1_file")
+        url_column = st.text_input("Link Column Header Name:", value="Video Links", key="t1_colname")
+        
     with col_right:
-        st.markdown("### 🛠️ 2. Execution Toggles")
+        st.markdown("### 2. Execution Toggles")
         inc_basic = st.checkbox("Reel ID & Username Handle", value=True)
         inc_profiles = st.checkbox("Auto-Scrape Creator Metadata (Meta API)", value=True)
         inc_likes_comments = st.checkbox("Likes & Comments Metrics", value=True)
@@ -233,12 +222,12 @@ if engine_selection == "🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker"
 
     if uploaded_file is not None:
         df = pd.read_excel(uploaded_file)
-        st.info(f"📋 Loaded {len(df)} tracking URLs from sheet.")
-        if st.button("🚀 Run Performance Matrix Pipeline", type="primary"):
+        st.info(f"Loaded {len(df)} lines from source configuration sheet.")
+        if st.button("Run Performance Pipeline", type="primary", key="t1_run"):
             if url_column not in df.columns:
-                st.error(f"❌ Missing column '{url_column}'.")
+                st.error(f"Target column tracking identifier '{url_column}' not found.")
             elif inc_roi and "Cost" not in df.columns:
-                st.error("❌ ROI options selected, but no column named exactly 'Cost' was found.")
+                st.error("ROI performance toggled, but column header exactly matching 'Cost' is missing.")
             else:
                 p_bar = st.progress(0)
                 status_txt = st.empty()
@@ -247,8 +236,7 @@ if engine_selection == "🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker"
                 global_jobs = []
                 profile_cache = {}
                 
-                # Step 1: Run fast API Account lookups
-                status_txt.text("⚡ API Processing: Fetching account stats via Meta...")
+                status_txt.text("Querying metadata frameworks via primary Meta API...")
                 for idx, row in df.iterrows():
                     u_handle = extract_username_from_url(str(row[url_column]))
                     if u_handle and u_handle not in profile_cache and inc_profiles:
@@ -258,11 +246,10 @@ if engine_selection == "🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker"
                     })
                     p_bar.progress((idx + 1) / len(df) * 0.3)
                 
-                # Step 2: High-speed Batch View Sniper wave
-                status_txt.text(f"🚀 Sniper Wave: Fetching views for {len(global_jobs)} assets via 30 workers...")
+                status_txt.text(f"Extracting specific metrics across {len(global_jobs)} indices...")
                 scraped_map = {}
                 with ThreadPoolExecutor(max_workers=30) as exec1:
-                    futures = [exec1.submit(fetch_single_reel_views_worker, job, ig_user=ig_username, ig_pass=ig_password) for job in global_jobs]
+                    futures = [exec1.submit(fetch_single_reel_views_worker, job) for job in global_jobs]
                     cc = 0
                     for f in as_completed(futures):
                         res = f.result()
@@ -270,7 +257,6 @@ if engine_selection == "🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker"
                         cc += 1
                         p_bar.progress(0.3 + (cc / len(global_jobs) * 0.7))
                 
-                # Compile arrays
                 r_ids, users, f_names, followers, r_likes, r_comments, r_views, r_types, r_times, r_status = [], [], [], [], [], [], [], [], [], []
                 er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
                 
@@ -319,25 +305,31 @@ if engine_selection == "🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker"
                 
                 df['Extraction_Status'] = r_status
                 df.drop(columns=['Shortcode_Temp'], inplace=True, errors='ignore')
-                status_txt.success("🎉 Single Ingestion Matrix Built Successfully!")
+                status_txt.success("Campaign performance metrics matrix constructed cleanly.")
                 st.dataframe(df.head(5))
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine='openpyxl') as w: df.to_excel(w, index=False)
-                st.download_button(label="📥 Download Audited Workbook", data=buf.getvalue(), file_name="single_url_analytics.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button(label="Download Audited Workbook", data=buf.getvalue(), file_name="campaign_tracker_analytics.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ==========================================
-# RUN MODULE TOOL 2
+# MODULE TRACK MODE: CREATOR AUDITOR
 # ==========================================
 else:
-    url_column = st.sidebar.text_input("Profile Column Header Name:", value="Profile Link")
-    st.markdown("### 📥 Ingest Tracker Spreadsheet Containing Creator Handles")
-    uploaded_file = st.file_uploader("Upload campaign tracker sheet (.xlsx)", type=["xlsx"], key="tool2_file")
-    
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.markdown("### 1. Data Ingestion")
+        uploaded_file = st.file_uploader("Upload Excel document (.xlsx)", type=["xlsx"], key="t2_file")
+        url_column = st.text_input("Profile Column Header Name:", value="Profile Link", key="t2_colname")
+        
+    with col_right:
+        st.markdown("### 2. Processing Notes")
+        st.info("The configuration will extract the 10 most recent chronological videos per creator via Meta APIs and append corresponding real-time metric distributions.")
+
     if uploaded_file is not None:
         df_inputs = pd.read_excel(uploaded_file)
-        st.success(f"📋 Dataset Loaded Successfully! Found {len(df_inputs)} profile rows.")
+        st.info(f"Loaded {len(df_inputs)} profile links from source tracker sheet.")
         
-        if st.button("🚀 Run Performance Matrix Pipeline", type="primary"):
+        if st.button("Run Performance Pipeline", type="primary", key="t2_run"):
             p_metadata = {}
             global_jobs_pool = []
             skipped_rows = []
@@ -345,8 +337,7 @@ else:
             p_bar = st.progress(0)
             status_txt = st.empty()
             
-            # STAGE 1: Full structure mapping via official Meta endpoints
-            status_txt.text("⚡ STAGE 1: Fetching structural timelines via primary Meta API...")
+            status_txt.text("Mapping targeted channel hierarchies via Meta APIs...")
             for idx, row in df_inputs.iterrows():
                 p_url = row[url_column]
                 if pd.isna(p_url): continue
@@ -361,13 +352,12 @@ else:
                     if meta_res["skipped_pinned"]: skipped_rows.extend(meta_res["skipped_pinned"])
                 p_bar.progress(((idx + 1) / len(df_inputs)) * 0.4)
                 
-            # STAGE 2: 30 Worker View Harvester Execution
             total_jobs = len(global_jobs_pool)
             completed_jobs = []
             if total_jobs > 0:
-                status_txt.text(f"🚀 STAGE 2: Running 30 thread-pool workers to fetch views for {total_jobs} total Reels...")
+                status_txt.text(f"Running high-speed processing array across {total_jobs} unique nodes...")
                 with ThreadPoolExecutor(max_workers=30) as final_exec:
-                    futures = [final_exec.submit(fetch_single_reel_views_worker, j, ig_user=ig_username, ig_pass=ig_password) for j in global_jobs_pool]
+                    futures = [final_exec.submit(fetch_single_reel_views_worker, j) for j in global_jobs_pool]
                     jc = 0
                     for f in as_completed(futures):
                         p_job = f.result()
@@ -382,8 +372,7 @@ else:
                         jc += 1
                         p_bar.progress(0.4 + ((jc / total_jobs) * 0.6))
             
-            # STAGE 3: IQR Math Processing Engine
-            status_txt.text("📊 STAGE 3: Compiling math layout analytics sheets...")
+            status_txt.text("Evaluating dataset outliers and executing statistical filtering...")
             df_processed_reels = pd.DataFrame(completed_jobs)
             granular_rows, summary_rows = [], []
             
@@ -435,7 +424,7 @@ else:
                 })
                 
             status_txt.empty()
-            st.success("🎉 Multi-Sheet Analytics Ingestion Complete!")
+            st.success("Targeted asset extraction execution cycle complete.")
             
             df_sum = pd.DataFrame(summary_rows)
             df_g_reels = pd.DataFrame(granular_rows)
@@ -450,12 +439,11 @@ else:
             with t_skip: st.dataframe(df_skip, use_container_width=True)
             
             buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as w:
-                df_sum.to_excel(w, sheet_name="Profile Summary", index=False)
-                df_g_reels.to_excel(w, sheet_name="Reel Metrics", index=False)
-                df_skip.to_excel(w, sheet_name="Skipped Reels", index=False)
-            st.download_button(label="📥 Download Multi-Sheet Marketing Workbook", data=buf.getvalue(), file_name="batch_timeline_analytics.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                df_sum.to_excel(writer, sheet_name="Profile Summary", index=False)
+                df_g_reels.to_excel(writer, sheet_name="Reel Metrics", index=False)
+                df_skip.to_excel(writer, sheet_name="Skipped Reels", index=False)
+            st.download_button(label="Download Multi-Sheet Marketing Workbook", data=buf.getvalue(), file_name="creator_auditor_analytics.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# Centered bottom corporate logo styling asset
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
