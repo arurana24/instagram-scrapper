@@ -12,8 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # META GRAPH API CREDENTIAL MATRIX
 # ==========================================
 # Securely fetched from Streamlit Secrets Manager
-ACCESS_TOKEN = st.secrets["META_ACCESS_TOKEN"]
-INSTAGRAM_ACCOUNT_ID = st.secrets["INSTAGRAM_ACCOUNT_ID"]
+ACCESS_TOKEN = st.secrets["EAAigrtOZCSv0BRpZCL6yQJ7Te3F44WuZA4LduZCpC1tGKvpg9VagsN7ScjvJuE7pqNIxBFYk0XaPC4hmklEBWg7JkS1end4BOvn1Ryi4eTJZCkPZA15RrHizv8EHZAQQjikEBhEAszIYnUQZAQb4gieT6GCHWZAicyElWymSWmBoFZB8eLgoCve6iGveOcQieJ9P2ZC"]
+INSTAGRAM_ACCOUNT_ID = st.secrets["122098856799362354"]
 BASE_URL = "https://graph.facebook.com/v22.0"
 
 # ==========================================
