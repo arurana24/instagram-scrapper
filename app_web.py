@@ -1,46 +1,42 @@
 import os
 import re
 import time
-import random
 import base64
 import pandas as pd
 import streamlit as st
-import instaloader
+import requests
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Initialize Instaloader
-L = instaloader.Instaloader()
+# ==========================================
+# META GRAPH API CREDENTIAL MATRIX
+# ==========================================
+# Securely fetched from Streamlit Secrets Manager
+ACCESS_TOKEN = st.secrets["META_ACCESS_TOKEN"]
+INSTAGRAM_ACCOUNT_ID = st.secrets["INSTAGRAM_ACCOUNT_ID"]
+BASE_URL = "https://graph.facebook.com/v22.0"
 
 # ==========================================
 # CUSTOM THEME & DESIGN CONFIGURATION
 # ==========================================
 st.set_page_config(page_title="Public Reel Analytics", page_icon="🎥", layout="wide")
 
-# Helper function to convert local image to secure Base64 for HTML injection
 def get_base64_image(image_path):
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode()
     return None
 
-# Check for both jpeg and jpg variations safely
 logo_base64 = get_base64_image("logo.jpeg") or get_base64_image("logo.jpg")
 
-# Advanced CSS Injection for Turquoise Canvas & Dark Turquoise (#008080) Components
 st.markdown(
     """
     <style>
-    /* Global application background canvas match */
-    .stApp {
-        background-color: #81d8d0;
-    }
+    .stApp { background-color: #81d8d0; }
     h1, h2, h3, p, label, .stMarkdown, .stText, [data-testid="stHeader"] {
         color: #1e293b !important;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
-    
-    /* 🛠️ DARK TURQUOISE BUTTONS & SUBMISSIONS */
     div.stButton > button, div.stDownloadButton > button {
         background-color: #008080 !important;
         color: #ffffff !important;
@@ -54,18 +50,8 @@ st.markdown(
         background-color: #005a5a !important;
         color: #ffffff !important;
     }
-    
-    /* 🛠️ PROGRESS TRACKERS & BARS CONTRAST MATCH */
-    .stProgress > div > div > div > div {
-        background-color: #008080 !important;
-    }
-    
-    /* 🛠️ STYLING FORM WIDGET CHECKBOXES */
-    .stCheckbox label p {
-        color: #1e293b !important;
-    }
-    
-    /* 🛠️ BULLETPROOF INGESTION DRAGZONE OVERRIDES */
+    .stProgress > div > div > div > div { background-color: #008080 !important; }
+    .stCheckbox label p { color: #1e293b !important; }
     .stFileUploader section {
         background-color: rgba(255, 255, 255, 0.5) !important;
         border: 2px dashed #008080 !important;
@@ -75,16 +61,9 @@ st.markdown(
         color: #ffffff !important;
         border: 1px solid #005a5a !important;
     }
-    
-    /* Forces the text within instructions to be clean and legible */
     .stFileUploader [data-testid="stFileUploadDropzoneInstructions"] div, 
     .stFileUploader [data-testid="stWidgetLabel"] p,
-    .stFileUploader span,
-    .stFileUploader small {
-        color: #000000 !important;
-    }
-    
-    /* 🛠️ CENTERED BOTTOM LOGO CONTAINER STYLE */
+    .stFileUploader span, .stFileUploader small { color: #000000 !important; }
     .bottom-logo-container {
         display: flex;
         justify-content: center;
@@ -94,17 +73,14 @@ st.markdown(
         padding-top: 20px;
         margin-bottom: 20px;
     }
-    .bottom-logo-container img {
-        width: 140px;
-        border-radius: 6px;
-    }
+    .bottom-logo-container img { width: 140px; border-radius: 6px; }
     </style>
     """,
     unsafe_allow_html=True
 )
 
 # ==========================================
-# CORE EXTRACTION DATA ENGINES
+# DATA PROCESSING UTILITIES & ENDPOINTS
 # ==========================================
 def extract_shortcode(url):
     if pd.isna(url) or not isinstance(url, str):
@@ -113,51 +89,81 @@ def extract_shortcode(url):
     match = re.search(pattern, url)
     return match.group(1) if match else None
 
-def fetch_all_public_metrics(shortcode, original_url):
+def extract_username_from_url(url):
+    if pd.isna(url) or not isinstance(url, str):
+        return None
+    url_clean = url.strip().rstrip('/')
+    match = re.search(r'(?:instagram\.com/|@)([a-zA-Z0-9_\.]+)', url_clean)
+    return match.group(1) if match else None
+
+def fetch_media_metrics_via_api(shortcode):
+    """Queries an individual shortcode directly via the instagram_media endpoint"""
     if not shortcode:
-        return {
-            "Reel ID": "N/A", "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
-            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Invalid Link"
-        }
+        return {"Reel ID": "N/A", "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Invalid Link"}
+    
+    url = f"{BASE_URL}/instagram_media"
+    params = {
+        "shortcode": shortcode,
+        "fields": "id,username,like_count,comments_count,video_view_count,media_type",
+        "access_token": ACCESS_TOKEN
+    }
     try:
-        # Organic staggered pacing to keep your network secure
-        time.sleep(random.uniform(0.5, 1.0))
-        post = instaloader.Post.from_shortcode(L.context, shortcode)
+        res = requests.get(url, params=params).json()
+        if "error" in res:
+            return {"Reel ID": shortcode, "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": f"API Error: {res['error'].get('message')}"}
         
-        # Get public profile level metrics natively
-        profile = post.owner_profile
-        full_name = profile.full_name if profile.full_name else "No Public Name"
-        followers = profile.followers
-        
-        likes_value = post.likes
-        if likes_value == -1:
-            likes_value = "Likes Hidden"
-            
         return {
-            "Reel ID": shortcode,
-            "Username": post.owner_username,
-            "Full Name": full_name,
-            "Followers": followers,
-            "Likes": likes_value,
-            "Comments": post.comments,
-            "Views": post.video_view_count if post.is_video else 0,
-            "Product Type": post.typename if post.typename else "Unknown",
+            "Reel ID": res.get("id", shortcode),
+            "Username": res.get("username", "N/A"),
+            "Likes": res.get("like_count", 0),
+            "Comments": res.get("comments_count", 0),
+            "Views": res.get("video_view_count", 0),
+            "Product Type": res.get("media_type", "Unknown"),
             "Status": "Success"
         }
     except Exception as e:
+        return {"Reel ID": shortcode, "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Network Fail"}
+
+def fetch_profile_discovery_via_api(username):
+    """Uses Business Discovery nested query maps to pull public stats and recent post arrays together"""
+    if not username:
+        return {"Username": "N/A", "Full Name": "No Public Name", "Followers": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Invalid Username"}
+    
+    url = f"{BASE_URL}/{INSTAGRAM_ACCOUNT_ID}"
+    query = f"business_discovery.username({username}){{name,followers_count,media.limit(1){{like_count,comments_count,video_view_count,media_type}}}}"
+    params = {"fields": query, "access_token": ACCESS_TOKEN}
+    
+    try:
+        res = requests.get(url, params=params).json()
+        if "error" in res:
+            return {"Username": username, "Full Name": "N/A", "Followers": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": f"API Error: {res['error'].get('message')}"}
+        
+        discovery = res["business_discovery"]
+        media_data = discovery.get("media", {}).get("data", [])
+        latest_post = media_data[0] if media_data else {}
+        
         return {
-            "Reel ID": shortcode, "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
-            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Error/Private"
+            "Username": username,
+            "Full Name": discovery.get("name", "No Public Name"),
+            "Followers": discovery.get("followers_count", 0),
+            "Likes": latest_post.get("like_count", 0),
+            "Comments": latest_post.get("comments_count", 0),
+            "Views": latest_post.get("video_view_count", 0),
+            "Product Type": latest_post.get("media_type", "N/A"),
+            "Status": "Success"
         }
+    except Exception as e:
+        return {"Username": username, "Full Name": "N/A", "Followers": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Network Fail"}
 
 # ==========================================
 # STREAMLIT USER INTERFACE
 # ==========================================
-st.title("🎥 Advanced Influencer Marketing Metric Extraper")
+st.title("🎥 Advanced Influencer Marketing Metric Extraper (Official API)")
 st.markdown("Upload campaign tracker sheets, configure checkboxes for customized performance frameworks, and output clean analytical tables.")
 
 # Sidebar Configuration
 st.sidebar.header("⚙️ Configuration Matrix")
+pipeline_mode = st.sidebar.radio("Data Extraction Mode Strategy:", ["Campaign Link Mode (Reels/Posts)", "Creator Profile Discovery Mode"])
 url_column = st.sidebar.text_input("Link Column Header Name:", value="Video Links")
 
 # UI Layout Columns
@@ -169,7 +175,6 @@ with col_left:
     
 with col_right:
     st.markdown("### 🛠️ 2. Select Features to Include")
-    
     tab1, tab2 = st.tabs(["🚀 Auto-Calculated Metrics", "📊 Campaign Analytics Framework"])
     
     with tab1:
@@ -188,7 +193,7 @@ with col_right:
 
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
-    st.info(f"📋 Dataset Loaded: Found {len(df)} tracking links ready for customization.")
+    st.info(f"📋 Dataset Loaded: Found {len(df)} tracking target entries ready for synchronization.")
     
     if st.button("🚀 Run Performance Matrix Pipeline", type="primary"):
         if url_column not in df.columns:
@@ -198,18 +203,25 @@ if uploaded_file is not None:
         else:
             progress_bar = st.progress(0)
             status_text = st.empty()
-            
-            df['Shortcode_Temp'] = df[url_column].apply(extract_shortcode)
-            results_map = {}
             total_rows = len(df)
+            results_map = {}
             
-            status_text.text("⚡ Spinning up parallel background profile workers...")
+            status_text.text("⚡ Spinning up secure parallel background Graph API calls (Max Speed)...")
             
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                future_to_row = {
-                    executor.submit(fetch_all_public_metrics, row['Shortcode_Temp'], row[url_column]): idx 
-                    for idx, row in df.iterrows()
-                }
+            # Execute without artificial delays (time.sleep completely removed)
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                if pipeline_mode == "Campaign Link Mode (Reels/Posts)":
+                    df['Shortcode_Temp'] = df[url_column].apply(extract_shortcode)
+                    future_to_row = {
+                        executor.submit(fetch_media_metrics_via_api, row['Shortcode_Temp']): idx 
+                        for idx, row in df.iterrows()
+                    }
+                else:
+                    df['User_Temp'] = df[url_column].apply(extract_username_from_url)
+                    future_to_row = {
+                        executor.submit(fetch_profile_discovery_via_api, row['User_Temp']): idx 
+                        for idx, row in df.iterrows()
+                    }
                 
                 completed = 0
                 for future in as_completed(future_to_row):
@@ -217,68 +229,65 @@ if uploaded_file is not None:
                     try:
                         results_map[row_idx] = future.result()
                     except Exception:
-                        results_map[row_idx] = {
-                            "Reel ID": "Error", "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
-                            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Thread Fail"
-                        }
+                        results_map[row_idx] = {"Status": "Thread Fail"}
                     
                     completed += 1
                     progress_bar.progress(completed / total_rows)
-                    status_text.text(f"🔄 Processing rows: {completed}/{total_rows}...")
+                    status_text.text(f"🔄 Syncing fields with Meta: {completed}/{total_rows}...")
 
-            # Parse array lists
+            # Parse array metrics arrays
             reel_ids, usernames, full_names, followers_list, likes, comments, views, products, status_list = [], [], [], [], [], [], [], [], []
             er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
             
             for i in range(total_rows):
-                res = results_map.get(i)
-                reel_ids.append(res["Reel ID"])
-                usernames.append(res["Username"])
-                full_names.append(res["Full Name"])
-                followers_list.append(res["Followers"])
-                likes.append(res["Likes"])
-                comments.append(res["Comments"])
-                views.append(res["Views"])
-                products.append(res["Product Type"])
-                status_list.append(res["Status"])
+                res = results_map.get(i, {"Status": "Missing Data"})
+                status_list.append(res.get("Status", "Unknown"))
+                
+                # Assign metrics based on mode defaults
+                usernames.append(res.get("Username", "N/A"))
+                full_names.append(res.get("Full Name", "No Public Name" if pipeline_mode != "Campaign Link Mode (Reels/Posts)" else "N/A"))
+                followers_list.append(res.get("Followers", "N/A"))
+                reel_ids.append(res.get("Reel ID", "N/A"))
+                
+                l_val = res.get("Likes", 0)
+                c_val = res.get("Comments", 0)
+                v_val = res.get("Views", 0)
+                
+                likes.append(l_val)
+                comments.append(c_val)
+                views.append(v_val)
+                products.append(res.get("Product Type", "N/A"))
 
-                # Dynamic Math Blocks
+                # Dynamic Analytical Ratios
                 try:
-                    v = float(res["Views"])
-                    l = float(res["Likes"]) if isinstance(res["Likes"], (int, float)) else 0
-                    c = float(res["Comments"])
+                    v = float(v_val)
+                    l = float(l_val)
+                    c = float(c_val)
                     
-                    # 1. ER%
                     er = ((l + c) / v) * 100 if v > 0 else 0
                     er_list.append(f"{round(er, 2)}%")
-                    
-                    # 2. Like/Views Ratio
-                    ratio = (l / v) if v > 0 else 0
-                    ratio_list.append(round(ratio, 4))
+                    ratio_list.append(round(l / v, 4) if v > 0 else 0.0)
                 except:
                     er_list.append("0.0%")
                     ratio_list.append(0.0)
 
-                # 3. Cost Metrics (CPV / CPE)
+                # Cost Frameworks
                 if inc_roi:
                     try:
                         cost = float(df.iloc[i]["Cost"])
-                        v = float(res["Views"])
-                        l = float(res["Likes"]) if isinstance(res["Likes"], (int, float)) else 0
-                        c = float(res["Comments"])
-                        
-                        cpv = cost / v if v > 0 else 0
-                        cpe = cost / (l + c) if (l + c) > 0 else 0
-                        
-                        cpv_list.append(round(cpv, 4))
-                        cpe_list.append(round(cpe, 4))
+                        v = float(v_val)
+                        l = float(l_val)
+                        c = float(c_val)
+                        cpv_list.append(round(cost / v, 4) if v > 0 else 0.0)
+                        cpe_list.append(round(cost / (l + c), 4) if (l + c) > 0 else 0.0)
                     except:
                         cpv_list.append("N/A")
                         cpe_list.append("N/A")
 
-            # 🛠️ Append Generated Data Columns
+            # 🛠️ Structural Data Transformations
             if inc_basic:
-                df['Reel ID'] = reel_ids
+                if pipeline_mode == "Campaign Link Mode (Reels/Posts)":
+                    df['Reel ID'] = reel_ids
                 df['Owner Username'] = usernames
             if inc_profiles:
                 df['Owner Full Name'] = full_names
@@ -306,10 +315,9 @@ if uploaded_file is not None:
                 df['Posting Frequency'] = ""
                 
             df['Extraction_Status'] = status_list
-            df.drop(columns=['Shortcode_Temp'], inplace=True, errors='ignore')
+            df.drop(columns=['Shortcode_Temp', 'User_Temp'], inplace=True, errors='ignore')
             
-            status_text.success("🎉 Custom Marketing Performance Sheet Built Successfully!")
-            
+            status_text.success("🎉 Custom Marketing Performance Sheet Built Successfully via Graph API!")
             st.markdown("### 👀 Preview Output Structure")
             st.dataframe(df.head(5))
             
@@ -324,8 +332,5 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-# ==========================================
-# BRANDING LOGO COMPONENT (BOTTOM MIDDLE)
-# ==========================================
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
