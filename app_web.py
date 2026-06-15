@@ -260,24 +260,27 @@ if engine_selection == "Campaign Tracker":
                 r_ids, users, f_names, followers, r_likes, r_comments, r_views, r_types, r_times, r_status = [], [], [], [], [], [], [], [], [], []
                 er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
                 
+               # Ensure this whole block stays neatly indented under the "with ThreadPoolExecutor" block above it
+                r_ids, users, f_names, followers, r_likes, r_comments, r_views, r_types, r_times, r_status = [], [], [], [], [], [], [], [], [], []
+                er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
+                
                 for i in range(len(df)):
-    scr = scraped_map.get(i, {"Shortcode": "N/A", "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "VIDEO", "Timestamp": "N/A", "Status": "Fail"})
-    
-    # Using .get() prevents the KeyError if a specific post fails to scrape
-    hand = scr.get("Username") if scr.get("Username") else scr.get("user_handle", "N/A")
-    
-    c_meta = profile_cache.get(hand, {"followers": "N/A", "full_name": "No Public Name"})
+                    scr = scraped_map.get(i, {"Shortcode": "N/A", "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "VIDEO", "Timestamp": "N/A", "Status": "Fail"})
                     
-                    r_ids.append(scr["Shortcode"])
+                    # Safe retrieval via .get() prevents future key crashes
+                    hand = scr.get("Username") if scr.get("Username") else scr.get("user_handle", "N/A")
+                    c_meta = profile_cache.get(hand, {"followers": "N/A", "full_name": "No Public Name"})
+                    
+                    r_ids.append(scr.get("Shortcode", "N/A"))
                     users.append(hand)
                     f_names.append(c_meta.get("full_name", "No Public Name"))
                     followers.append(c_meta.get("followers", "N/A"))
-                    r_likes.append(scr["Likes"])
-                    r_comments.append(scr["Comments"])
-                    r_views.append(scr["Views"])
-                    r_types.append(scr["Product Type"])
-                    r_times.append(scr["Timestamp"])
-                    r_status.append(scr["Status"])
+                    r_likes.append(scr.get("Likes", 0))
+                    r_comments.append(scr.get("Comments", 0))
+                    r_views.append(scr.get("Views", 0))
+                    r_types.append(scr.get("Product Type", "VIDEO"))
+                    r_times.append(scr.get("Timestamp", "N/A"))
+                    r_status.append(scr.get("Status", "Fail"))
                     
                     try:
                         v = float(scr["Views"])
