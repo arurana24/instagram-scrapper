@@ -2,17 +2,32 @@ import os
 import re
 import time
 import random
+import logging
+import io
 import base64
 import pandas as pd
 import streamlit as st
+import requests
 import instaloader
-import io
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==========================================
-# CUSTOM THEME & DESIGN CONFIGURATION
+# SYSTEM SETUP & LOGGING
 # ==========================================
-st.set_page_config(page_title="Public Reel Analytics", page_icon="🎥", layout="wide")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+
+# Securely fetch credentials from your Streamlit Secrets Manager
+ACCESS_TOKEN = st.secrets["META_ACCESS_TOKEN"]
+INSTAGRAM_ACCOUNT_ID = st.secrets["INSTAGRAM_ACCOUNT_ID"]
+BASE_URL = "https://graph.facebook.com/v22.0"
+
+# Initialize Instaloader framework out of local loops
+L = instaloader.Instaloader()
 
 # Helper function to convert local image to secure Base64 for HTML injection
 def get_base64_image(image_path):
@@ -21,23 +36,17 @@ def get_base64_image(image_path):
             return base64.b64encode(img_file.read()).decode()
     return None
 
-# Check for both jpeg and jpg variations safely
 logo_base64 = get_base64_image("logo.jpeg") or get_base64_image("logo.jpg")
 
-# Advanced CSS Injection for Turquoise Canvas & Dark Turquoise (#008080) Components
+# Advanced CSS Injection for Turquoise Design Canvas
 st.markdown(
     """
     <style>
-    /* Global application background canvas match */
-    .stApp {
-        background-color: #81d8d0;
-    }
+    .stApp { background-color: #81d8d0; }
     h1, h2, h3, p, label, .stMarkdown, .stText, [data-testid="stHeader"] {
         color: #1e293b !important;
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
-    
-    /* 🛠️ DARK TURQUOISE BUTTONS & SUBMISSIONS */
     div.stButton > button, div.stDownloadButton > button {
         background-color: #008080 !important;
         color: #ffffff !important;
@@ -51,57 +60,28 @@ st.markdown(
         background-color: #005a5a !important;
         color: #ffffff !important;
     }
-    
-    /* 🛠️ PROGRESS TRACKERS & BARS CONTRAST MATCH */
-    .stProgress > div > div > div > div {
-        background-color: #008080 !important;
-    }
-    
-    /* 🛠️ STYLING FORM WIDGET CHECKBOXES */
-    .stCheckbox label p {
-        color: #1e293b !important;
-    }
-    
-    /* 🛠️ BULLETPROOF INGESTION DRAGZONE OVERRIDES */
+    .stProgress > div > div > div > div { background-color: #008080 !important; }
     .stFileUploader section {
         background-color: rgba(255, 255, 255, 0.5) !important;
         border: 2px dashed #008080 !important;
     }
-    .stFileUploader button {
-        background-color: #008080 !important;
-        color: #ffffff !important;
-        border: 1px solid #005a5a !important;
-    }
-    
-    /* Forces the text within instructions to be clean and legible */
+    .stFileUploader button { background-color: #008080 !important; color: #ffffff !important; }
     .stFileUploader [data-testid="stFileUploadDropzoneInstructions"] div, 
-    .stFileUploader [data-testid="stWidgetLabel"] p,
-    .stFileUploader span,
-    .stFileUploader small {
+    .stFileUploader [data-testid="stWidgetLabel"] p, .stFileUploader span, .stFileUploader small {
         color: #000000 !important;
     }
-    
-    /* 🛠️ CENTERED BOTTOM LOGO CONTAINER STYLE */
     .bottom-logo-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        width: 100%;
-        margin-top: 50px;
-        padding-top: 20px;
-        margin-bottom: 20px;
+        display: flex; justify-content: center; align-items: center; width: 100%;
+        margin-top: 50px; padding-top: 20px; margin-bottom: 20px;
     }
-    .bottom-logo-container img {
-        width: 140px;
-        border-radius: 6px;
-    }
+    .bottom-logo-container img { width: 140px; border-radius: 6px; }
     </style>
     """,
     unsafe_allow_html=True
 )
 
 # ==========================================
-# CORE EXTRACTION DATA ENGINES
+# PARSING & META API DATA ENGINE WORKERS
 # ==========================================
 def extract_shortcode(url):
     if pd.isna(url) or not isinstance(url, str):
@@ -110,239 +90,372 @@ def extract_shortcode(url):
     match = re.search(pattern, url)
     return match.group(1) if match else None
 
-def fetch_all_public_metrics(shortcode, original_url, ig_user=None, ig_pass=None):
-    if not shortcode:
-        return {
-            "Reel ID": "N/A", "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
-            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": "Invalid Link"
-        }
+def extract_username_from_url(url):
+    if pd.isna(url) or not isinstance(url, str):
+        return None
+    url_clean = url.strip().rstrip('/')
+    match = re.search(r'(?:instagram\.com/|@)([a-zA-Z0-9_\.]+)', url_clean)
+    return match.group(1) if match else url_clean
+
+def fetch_creator_metadata_via_api(username):
+    """ Meta API Framework: Returns root profile follower configurations """
+    if not username:
+        return {"followers": 0, "full_name": "No Public Name", "status": "Invalid Handle"}
+    url = f"{BASE_URL}/{INSTAGRAM_ACCOUNT_ID}"
+    query = f"business_discovery.username({username}){{name,followers_count}}"
+    params = {"fields": query, "access_token": ACCESS_TOKEN}
     try:
-        # Create an isolated Instaloader engine inside each thread context
-        L_thread = instaloader.Instaloader()
+        res = requests.get(url, params=params).json()
+        if "error" in res:
+            return {"followers": 0, "full_name": "No Public Name", "status": f"API Error"}
+        discovery = res.get("business_discovery", {})
+        return {"followers": discovery.get("followers_count", 0), "full_name": discovery.get("name", "No Public Name"), "status": "Success"}
+    except Exception:
+        return {"followers": 0, "full_name": "No Public Name", "status": "Connection Fail"}
+
+def fetch_creator_timeline_via_api(username, profile_url):
+    """ Meta API Framework: Retrieves structural data layout & deep timeline nodes """
+    if not username:
+        return {"followers": 0, "status": "Invalid Username", "reels_to_job": [], "skipped_pinned": []}
+    url = f"{BASE_URL}/{INSTAGRAM_ACCOUNT_ID}"
+    query = f"business_discovery.username({username}){{name,followers_count,media.limit(30){{id,like_count,comments_count,media_type,timestamp,permalink}}}}"
+    params = {"fields": query, "access_token": ACCESS_TOKEN}
+    try:
+        res = requests.get(url, params=params).json()
+        if "error" in res:
+            return {"followers": 0, "status": "API Mismatch Error", "reels_to_job": [], "skipped_pinned": []}
+        discovery = res.get("business_discovery", {})
+        followers = discovery.get("followers_count", 0)
+        media_data = discovery.get("media", {}).get("data", [])
         
-        # Authenticate if credentials are provided in the UI sidebar
-        if ig_user and ig_pass:
-            L_thread.login(ig_user, ig_pass)
+        reels_to_job, skipped_pinned = [], []
+        latest_valid_timestamp = None
         
-        # Organic staggered pacing to keep the engine secure from algorithmic rate triggers
-        time.sleep(random.uniform(1.5, 3.0))
-        post = instaloader.Post.from_shortcode(L_thread.context, shortcode)
-        
-        # Get public profile level metrics natively
-        profile = post.owner_profile
-        full_name = profile.full_name if profile.full_name else "No Public Name"
-        followers = profile.followers
-        
-        likes_value = post.likes
-        if likes_value == -1:
-            likes_value = "Likes Hidden"
+        for item in media_data:
+            if item.get("media_type") != "VIDEO":
+                continue
+            if len(reels_to_job) >= 10:
+                break
+            post_id = item.get("id")
+            permalink = item.get("permalink", f"https://www.instagram.com/p/{post_id}/")
+            likes = item.get("like_count", 0)
+            comments = item.get("comments_count", 0)
+            time_str = item.get("timestamp", "N/A")
             
-        return {
-            "Reel ID": shortcode,
-            "Username": post.owner_username,
-            "Full Name": full_name,
-            "Followers": followers,
-            "Likes": likes_value,
-            "Comments": post.comments,
-            "Views": post.video_view_count if post.is_video else 0,
-            "Product Type": post.typename if post.typename else "Unknown",
-            "Status": "Success"
-        }
-    except Exception as e:
-        return {
-            "Reel ID": shortcode, "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
-            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": f"Error: {str(e)}"
-        }
+            try:
+                clean_time_str = re.sub(r'([+-]\d{4})$', '', time_str)
+                post_time = datetime.strptime(clean_time_str, "%Y-%m-%dT%H:%M:%S")
+            except Exception:
+                post_time = datetime.utcnow()
+                
+            er = (likes + comments) / followers * 100 if followers > 0 else 0.0
+            
+            if latest_valid_timestamp and (latest_valid_timestamp - post_time).days > 30:
+                skipped_pinned.append({
+                    "Profile Link": profile_url, "Username": username, "Reel URL": permalink,
+                    "Shortcode": post_id, "Views": 0, "Likes": likes, "Comments": comments,
+                    "Engagement Rate (%)": round(er, 2), "Timestamp": time_str, "Skip Reason": "Out-of-Order Pinned Post"
+                })
+                continue
+            if latest_valid_timestamp is None:
+                latest_valid_timestamp = post_time
+                
+            reels_to_job.append({
+                "post_id": post_id, "permalink": permalink, "profile_url": profile_url, 
+                "username": username, "followers": followers, "likes": likes, 
+                "comments": comments, "post_time": post_time, "timestamp_str": time_str, "er": er
+            })
+        return {"followers": followers, "status": "Success", "reels_to_job": reels_to_job, "skipped_pinned": skipped_pinned}
+    except Exception:
+        return {"followers": 0, "status": "API Exception Connection", "reels_to_job": [], "skipped_pinned": []}
+
+def fetch_single_reel_views_worker(job, ig_user=None, ig_pass=None):
+    """ Tail-End Instaloader Sniper: Target-harvests exact public web play views inside background threads """
+    permalink = job["permalink"]
+    try:
+        shortcode_match = re.search(r'/reel/([^/]+)/|/p/([^/]+)/', permalink)
+        code = shortcode_match.group(1) or shortcode_match.group(2) if shortcode_match else job.get("post_id") or job.get("shortcode")
+        time.sleep(random.uniform(0.1, 0.25))
+        
+        post = instaloader.Post.from_shortcode(L.context, code)
+        views = post.video_view_count if post.is_video else 0
+        coauthors = [author.username for author in post.get_coauthors()] if hasattr(post, 'get_coauthors') else []
+        status = "Skipped: Collaboration" if len(coauthors) > 1 else "Success"
+        
+        # Pull details if it's Tool 1 passing blank elements
+        job.update({"Views": views, "Status": status, "Shortcode": code})
+        if "Timestamp" not in job or job["Timestamp"] == "N/A":
+            job["Timestamp"] = post.date_utc.strftime("%Y-%m-%d %H:%M:%S") if post.date_utc else "N/A"
+        if "Product Type" not in job:
+            job["Product Type"] = post.typename if post.typename else "VIDEO"
+        return job
+    except Exception:
+        job.update({"Views": 0, "Status": "Valid (Views Fallback)", "Shortcode": job.get("post_id", "Error")})
+        if "Timestamp" not in job: job["Timestamp"] = "N/A"
+        if "Product Type" not in job: job["Product Type"] = "VIDEO"
+        return job
 
 # ==========================================
-# STREAMLIT USER INTERFACE
+# STREAMLIT USER INTERFACE VIEW LAYER
 # ==========================================
-st.title("🎥 Advanced Influencer Marketing Metric Extractor")
-st.markdown("Upload campaign tracker sheets, configure checkboxes for customized performance frameworks, and output clean analytical tables.")
+st.title("🎥 Campaign Metric Production Matrix")
+engine_selection = st.radio(
+    "🧭 Select Active Analytical Tool Module:",
+    ["🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker", "📊 Tool 2: Batch Handle Timeline Harvesting Engine"],
+    horizontal=True
+)
+st.markdown("---")
 
-# Sidebar Configuration Matrix
-st.sidebar.header("⚙️ Configuration Matrix")
-url_column = st.sidebar.text_input("Link Column Header Name:", value="Video Links")
+# Active Sidebar Layout configurations
+st.sidebar.header("⚙️ Configuration Hub")
+ig_username = st.sidebar.text_input("Instagram Username (Optional Burner):", value="")
+ig_password = st.sidebar.text_input("Instagram Password (Optional Burner):", type="password", value="")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔒 Authentication (Highly Recommended)")
-st.sidebar.caption("Instagram frequently blocks anonymous requests. Use a burner/test account to ensure processing completes smoothly.")
-ig_username = st.sidebar.text_input("Instagram Username:", type="default", value="")
-ig_password = st.sidebar.text_input("Instagram Password:", type="password", value="")
-
-# UI Layout Columns
-col_left, col_right = st.columns([1, 1])
-
-with col_left:
-    st.markdown("### 📥 1. Data Ingestion")
-    uploaded_file = st.file_uploader("Choose your input Excel file (.xlsx)", type=["xlsx"])
-    
-with col_right:
-    st.markdown("### 🛠️ 2. Select Features to Include")
-    
-    tab1, tab2 = st.tabs(["🚀 Auto-Calculated Metrics", "📊 Campaign Analytics Framework"])
-    
-    with tab1:
+# ==========================================
+# RUN MODULE TOOL 1
+# ==========================================
+if engine_selection == "🚀 Tool 1: Single URL Multi-Feature Ingestion Tracker":
+    url_column = st.sidebar.text_input("Link Column Header Name:", value="Video Links")
+    col_left, col_right = st.columns(2)
+    with col_left:
+        st.markdown("### 📥 1. Ingest Video Links Document")
+        uploaded_file = st.file_uploader("Upload Excel file (.xlsx)", type=["xlsx"], key="tool1_file")
+    with col_right:
+        st.markdown("### 🛠️ 2. Execution Toggles")
         inc_basic = st.checkbox("Reel ID & Username Handle", value=True)
-        inc_profiles = st.checkbox("Auto-Scrape Full Name & Followers Count", value=True)
-        inc_likes_comments = st.checkbox("Likes & Comments Count", value=True)
-        inc_views_type = st.checkbox("Views Count & Product Type", value=True)
-        inc_er = st.checkbox("Auto-Calculate ER% ((Likes + Comments) / Views)", value=True)
+        inc_profiles = st.checkbox("Auto-Scrape Creator Metadata (Meta API)", value=True)
+        inc_likes_comments = st.checkbox("Likes & Comments Metrics", value=True)
+        inc_views_type = st.checkbox("Views Count & Asset Type", value=True)
+        inc_timestamp_t1 = st.checkbox("Include Video Publication Timestamp", value=True)
+        inc_er = st.checkbox("Auto-Calculate View Engagement Rate (ER%)", value=True)
         inc_ratio = st.checkbox("Auto-Calculate Like/Views Ratio", value=True)
-        inc_roi = st.checkbox("Auto-Calculate CPV & CPE (Requires a 'Cost' column)", value=False)
-        
-    with tab2:
-        st.caption("Check these to insert empty structural columns ready for backend campaign logging.")
-        inc_reach_metrics = st.checkbox("Reach, Impressions, & Shares Tracker", value=False)
-        inc_historical = st.checkbox("CPE, VTR (Last 5 Posts) & Posting Frequency", value=False)
+        inc_roi = st.checkbox("Auto-Calculate CPV & CPE (Requires 'Cost' column)", value=False)
 
-if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file)
-    st.info(f"📋 Dataset Loaded: Found {len(df)} tracking links ready for customization.")
-    
-    if st.button("🚀 Run Performance Matrix Pipeline", type="primary"):
-        if url_column not in df.columns:
-            st.error(f"❌ Could not find column '{url_column}'. Please check your column heading name.")
-        elif inc_roi and "Cost" not in df.columns:
-            st.error("❌ ROI metrics selected, but no column named exactly 'Cost' was found in your starting file.")
-        else:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            df['Shortcode_Temp'] = df[url_column].apply(extract_shortcode)
-            results_map = {}
-            total_rows = len(df)
-            
-            status_text.text("⚡ Spinning up parallel background profile workers...")
-            
-            # Use lower max_workers to avoid instant automated platform dynamic blocking
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                future_to_row = {
-                    executor.submit(
-                        fetch_all_public_metrics, 
-                        row['Shortcode_Temp'], 
-                        row[url_column],
-                        ig_user=ig_username if ig_username != "" else None,
-                        ig_pass=ig_password if ig_password != "" else None
-                    ): idx 
-                    for idx, row in df.iterrows()
-                }
+    if uploaded_file is not None:
+        df = pd.read_excel(uploaded_file)
+        st.info(f"📋 Loaded {len(df)} tracking URLs from sheet.")
+        if st.button("🚀 Run Performance Matrix Pipeline", type="primary"):
+            if url_column not in df.columns:
+                st.error(f"❌ Missing column '{url_column}'.")
+            elif inc_roi and "Cost" not in df.columns:
+                st.error("❌ ROI options selected, but no column named exactly 'Cost' was found.")
+            else:
+                p_bar = st.progress(0)
+                status_txt = st.empty()
+                df['Shortcode_Temp'] = df[url_column].apply(extract_shortcode)
                 
-                completed = 0
-                for future in as_completed(future_to_row):
-                    row_idx = future_to_row[future]
+                global_jobs = []
+                profile_cache = {}
+                
+                # Step 1: Run fast API Account lookups
+                status_txt.text("⚡ API Processing: Fetching account stats via Meta...")
+                for idx, row in df.iterrows():
+                    u_handle = extract_username_from_url(str(row[url_column]))
+                    if u_handle and u_handle not in profile_cache and inc_profiles:
+                        profile_cache[u_handle] = fetch_creator_metadata_via_api(u_handle)
+                    global_jobs.append({
+                        "index": idx, "permalink": row[url_column], "shortcode": row['Shortcode_Temp'], "user_handle": u_handle
+                    })
+                    p_bar.progress((idx + 1) / len(df) * 0.3)
+                
+                # Step 2: High-speed Batch View Sniper wave
+                status_txt.text(f"🚀 Sniper Wave: Fetching views for {len(global_jobs)} assets via 30 workers...")
+                scraped_map = {}
+                with ThreadPoolExecutor(max_workers=30) as exec1:
+                    futures = [exec1.submit(fetch_single_reel_views_worker, job, ig_user=ig_username, ig_pass=ig_password) for job in global_jobs]
+                    cc = 0
+                    for f in as_completed(futures):
+                        res = f.result()
+                        scraped_map[res["index"]] = res
+                        cc += 1
+                        p_bar.progress(0.3 + (cc / len(global_jobs) * 0.7))
+                
+                # Compile arrays
+                r_ids, users, f_names, followers, r_likes, r_comments, r_views, r_types, r_times, r_status = [], [], [], [], [], [], [], [], [], []
+                er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
+                
+                for i in range(len(df)):
+                    scr = scraped_map.get(i, {"Shortcode": "N/A", "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "VIDEO", "Timestamp": "N/A", "Status": "Fail"})
+                    hand = scr["Username"] if scr["Username"] != "N/A" else scr.get("user_handle", "N/A")
+                    c_meta = profile_cache.get(hand, {"followers": "N/A", "full_name": "No Public Name"})
+                    
+                    r_ids.append(scr["Shortcode"])
+                    users.append(hand)
+                    f_names.append(c_meta.get("full_name", "No Public Name"))
+                    followers.append(c_meta.get("followers", "N/A"))
+                    r_likes.append(scr["Likes"])
+                    r_comments.append(scr["Comments"])
+                    r_views.append(scr["Views"])
+                    r_types.append(scr["Product Type"])
+                    r_times.append(scr["Timestamp"])
+                    r_status.append(scr["Status"])
+                    
                     try:
-                        results_map[row_idx] = future.result()
-                    except Exception as e:
-                        results_map[row_idx] = {
-                            "Reel ID": "Error", "Username": "N/A", "Full Name": "N/A", "Followers": "N/A",
-                            "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "N/A", "Status": f"Thread Fail: {str(e)}"
-                        }
-                    
-                    completed += 1
-                    progress_bar.progress(completed / total_rows)
-                    status_text.text(f"🔄 Processing rows: {completed}/{total_rows}...")
-
-            # Parse array lists
-            reel_ids, usernames, full_names, followers_list, likes, comments, views, products, status_list = [], [], [], [], [], [], [], [], []
-            er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
-            
-            for i in range(total_rows):
-                res = results_map.get(i)
-                reel_ids.append(res["Reel ID"])
-                usernames.append(res["Username"])
-                full_names.append(res["Full Name"])
-                followers_list.append(res["Followers"])
-                likes.append(res["Likes"])
-                comments.append(res["Comments"])
-                views.append(res["Views"])
-                products.append(res["Product Type"])
-                status_list.append(res["Status"])
-
-                # Dynamic Math Blocks
-                try:
-                    v = float(res["Views"])
-                    l = float(res["Likes"]) if isinstance(res["Likes"], (int, float)) else 0
-                    c = float(res["Comments"])
-                    
-                    # 1. ER%
-                    er = ((l + c) / v) * 100 if v > 0 else 0
-                    er_list.append(f"{round(er, 2)}%")
-                    
-                    # 2. Like/Views Ratio
-                    ratio = (l / v) if v > 0 else 0
-                    ratio_list.append(round(ratio, 4))
-                except:
-                    er_list.append("0.0%")
-                    ratio_list.append(0.0)
-
-                # 3. Cost Metrics (CPV / CPE)
-                if inc_roi:
-                    try:
-                        cost = float(df.iloc[i]["Cost"])
-                        v = float(res["Views"])
-                        l = float(res["Likes"]) if isinstance(res["Likes"], (int, float)) else 0
-                        c = float(res["Comments"])
-                        
-                        cpv = cost / v if v > 0 else 0
-                        cpe = cost / (l + c) if (l + c) > 0 else 0
-                        
-                        cpv_list.append(round(cpv, 4))
-                        cpe_list.append(round(cpe, 4))
+                        v = float(scr["Views"])
+                        l = float(scr["Likes"])
+                        c = float(scr["Comments"])
+                        er_list.append(f"{round(((l + c) / v * 100), 2)}%" if v > 0 else "0.0%")
+                        ratio_list.append(round((l / v), 4) if v > 0 else 0.0)
                     except:
-                        cpv_list.append("N/A")
-                        cpe_list.append("N/A")
+                        er_list.append("0.0%"), ratio_list.append(0.0)
+                        
+                    if inc_roi:
+                        try:
+                            cost = float(df.iloc[i]["Cost"])
+                            v = float(scr["Views"])
+                            cpv_list.append(round(cost / v, 4) if v > 0 else 0)
+                            cpe_list.append(round(cost / (float(scr["Likes"]) + float(scr["Comments"])), 4) if (float(scr["Likes"]) + float(scr["Comments"])) > 0 else 0)
+                        except:
+                            cpv_list.append("N/A"), cpe_list.append("N/A")
 
-            # 🛠️ Append Generated Data Columns
-            if inc_basic:
-                df['Reel ID'] = reel_ids
-                df['Owner Username'] = usernames
-            if inc_profiles:
-                df['Owner Full Name'] = full_names
-                df['Followers Count'] = followers_list
-            if inc_likes_comments:
-                df['Likes Count'] = likes
-                df['Comments Count'] = comments
-            if inc_views_type:
-                df['Video Views and Play Count'] = views
-                df['Product Type'] = products
-            if inc_reach_metrics:
-                df['Shares Count'] = ""
-                df['Reach'] = ""
-                df['Impressions/Views'] = ""
-            if inc_er:
-                df['ER%'] = er_list
-            if inc_ratio:
-                df['Like/Views Ratio'] = ratio_list
-            if inc_roi:
-                df['CPV'] = cpv_list
-                df['CPE'] = cpe_list
-            if inc_historical:
-                df['CPE (last 5 posts)'] = ""
-                df['VTR (last 5 posts)'] = ""
-                df['Posting Frequency'] = ""
+                if inc_basic: df['Reel ID'] = r_ids; df['Owner Username'] = users
+                if inc_profiles: df['Owner Full Name'] = f_names; df['Followers Count'] = followers
+                if inc_likes_comments: df['Likes Count'] = r_likes; df['Comments Count'] = r_comments
+                if inc_views_type: df['Video Views'] = r_views; df['Product Type'] = r_types
+                if inc_timestamp_t1: df['Publication Timestamp'] = r_times
+                if inc_er: df['ER%'] = er_list
+                if inc_ratio: df['Like/Views Ratio'] = ratio_list
+                if inc_roi: df['CPV'] = cpv_list; df['CPE'] = cpe_list
                 
-            df['Extraction_Status'] = status_list
-            df.drop(columns=['Shortcode_Temp'], inplace=True, errors='ignore')
-            
-            status_text.success("🎉 Custom Marketing Performance Sheet Built Successfully!")
-            
-            st.markdown("### 👀 Preview Output Structure")
-            st.dataframe(df.head(5))
-            
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            
-            st.download_button(
-                label="📥 Download Marketing Sheet Asset",
-                data=buffer.getvalue(),
-                file_name="instagram_marketing_dashboard.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                df['Extraction_Status'] = r_status
+                df.drop(columns=['Shortcode_Temp'], inplace=True, errors='ignore')
+                status_txt.success("🎉 Single Ingestion Matrix Built Successfully!")
+                st.dataframe(df.head(5))
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine='openpyxl') as w: df.to_excel(w, index=False)
+                st.download_button(label="📥 Download Audited Workbook", data=buf.getvalue(), file_name="single_url_analytics.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ==========================================
-# BRANDING LOGO COMPONENT (BOTTOM MIDDLE)
+# RUN MODULE TOOL 2
 # ==========================================
+else:
+    url_column = st.sidebar.text_input("Profile Column Header Name:", value="Profile Link")
+    st.markdown("### 📥 Ingest Tracker Spreadsheet Containing Creator Handles")
+    uploaded_file = st.file_uploader("Upload campaign tracker sheet (.xlsx)", type=["xlsx"], key="tool2_file")
+    
+    if uploaded_file is not None:
+        df_inputs = pd.read_excel(uploaded_file)
+        st.success(f"📋 Dataset Loaded Successfully! Found {len(df_inputs)} profile rows.")
+        
+        if st.button("🚀 Run Performance Matrix Pipeline", type="primary"):
+            p_metadata = {}
+            global_jobs_pool = []
+            skipped_rows = []
+            
+            p_bar = st.progress(0)
+            status_txt = st.empty()
+            
+            # STAGE 1: Full structure mapping via official Meta endpoints
+            status_txt.text("⚡ STAGE 1: Fetching structural timelines via primary Meta API...")
+            for idx, row in df_inputs.iterrows():
+                p_url = row[url_column]
+                if pd.isna(p_url): continue
+                hand = extract_username_from_url(str(p_url)) or "N/A"
+                
+                meta_res = fetch_creator_timeline_via_api(hand, p_url)
+                if meta_res.get("status") != "Success":
+                    p_metadata[p_url] = {"username": hand, "followers": 0, "status": meta_res.get("status", "API Mismatch")}
+                else:
+                    p_metadata[p_url] = {"username": hand, "followers": meta_res["followers"], "status": "Success"}
+                    global_jobs_pool.extend(meta_res["reels_to_job"])
+                    if meta_res["skipped_pinned"]: skipped_rows.extend(meta_res["skipped_pinned"])
+                p_bar.progress(((idx + 1) / len(df_inputs)) * 0.4)
+                
+            # STAGE 2: 30 Worker View Harvester Execution
+            total_jobs = len(global_jobs_pool)
+            completed_jobs = []
+            if total_jobs > 0:
+                status_txt.text(f"🚀 STAGE 2: Running 30 thread-pool workers to fetch views for {total_jobs} total Reels...")
+                with ThreadPoolExecutor(max_workers=30) as final_exec:
+                    futures = [final_exec.submit(fetch_single_reel_views_worker, j, ig_user=ig_username, ig_pass=ig_password) for j in global_jobs_pool]
+                    jc = 0
+                    for f in as_completed(futures):
+                        p_job = f.result()
+                        if p_job["Status"] == "Skipped: Collaboration":
+                            skipped_rows.append({
+                                "Profile Link": p_job["profile_url"], "Username": p_job["username"], "Reel URL": p_job["permalink"],
+                                "Shortcode": p_job["Shortcode"], "Views": p_job["Views"], "Likes": p_job["likes"], "Comments": p_job["comments"],
+                                "Engagement Rate (%)": round(p_job["er"], 2), "Timestamp": p_job["timestamp_str"], "Skip Reason": "Co-authored Collaboration"
+                            })
+                        else:
+                            completed_jobs.append(p_job)
+                        jc += 1
+                        p_bar.progress(0.4 + ((jc / total_jobs) * 0.6))
+            
+            # STAGE 3: IQR Math Processing Engine
+            status_txt.text("📊 STAGE 3: Compiling math layout analytics sheets...")
+            df_processed_reels = pd.DataFrame(completed_jobs)
+            granular_rows, summary_rows = [], []
+            
+            for p_url, m in p_metadata.items():
+                hand = m["username"]
+                followers = m["followers"]
+                status = m["status"]
+                org_reels = []
+                
+                if not df_processed_reels.empty:
+                    sub = df_processed_reels[df_processed_reels["profile_url"] == p_url]
+                    if not sub.empty:
+                        if len(sub) >= 4:
+                            q1, q3 = sub["Views"].quantile(0.25), sub["Views"].quantile(0.75)
+                            upper_bound = q3 + (1.5 * (q3 - q1))
+                            for _, r_row in sub.iterrows():
+                                if r_row["Views"] > upper_bound and r_row["Views"] > 0:
+                                    skipped_rows.append({
+                                        "Profile Link": p_url, "Username": hand, "Reel URL": r_row["permalink"],
+                                        "Shortcode": r_row["Shortcode"], "Views": r_row["Views"], "Likes": r_row["likes"], "Comments": r_row["comments"],
+                                        "Engagement Rate (%)": round(r_row["er"], 2), "Timestamp": r_row["timestamp_str"], "Skip Reason": "Boosted Ad Outlier (IQR Filter)"
+                                    })
+                                else:
+                                    org_reels.append(r_row)
+                                    granular_rows.append({
+                                        "Profile Link": p_url, "Username": hand, "Reel URL": r_row["permalink"], "Shortcode": r_row["Shortcode"],
+                                        "Views": r_row["Views"], "Likes": r_row["likes"], "Comments": r_row["comments"], "Engagement Rate (%)": round(r_row["er"], 2), "Timestamp": r_row["timestamp_str"]
+                                    })
+                        else:
+                            for _, r_row in sub.iterrows():
+                                org_reels.append(r_row)
+                                granular_rows.append({
+                                    "Profile Link": p_url, "Username": hand, "Reel URL": r_row["permalink"], "Shortcode": r_row["Shortcode"],
+                                    "Views": r_row["Views"], "Likes": r_row["likes"], "Comments": r_row["comments"], "Engagement Rate (%)": round(r_row["er"], 2), "Timestamp": r_row["timestamp_str"]
+                                })
+                                
+                if org_reels:
+                    avg_v = sum([x["Views"] for x in org_reels]) / len(org_reels)
+                    avg_l = sum([x["likes"] for x in org_reels]) / len(org_reels)
+                    avg_c = sum([x["comments"] for x in org_reels]) / len(org_reels)
+                    avg_e = sum([x["er"] for x in org_reels]) / len(org_reels)
+                else:
+                    avg_v = avg_l = avg_c = avg_e = 0
+                    if status == "Success": status = "No Organic Reels Found"
+                    
+                summary_rows.append({
+                    "Profile Link": p_url, "Username": hand, "Followers": followers, "Reels Analysed": len(org_reels),
+                    "Avg Views": round(avg_v, 2), "Avg Likes": round(avg_l, 2), "Avg Comments": round(avg_c, 2), "Avg Engagement Rate (%)": round(avg_e, 2), "Status": status
+                })
+                
+            status_txt.empty()
+            st.success("🎉 Multi-Sheet Analytics Ingestion Complete!")
+            
+            df_sum = pd.DataFrame(summary_rows)
+            df_g_reels = pd.DataFrame(granular_rows)
+            df_skip = pd.DataFrame(skipped_rows)
+            
+            if df_g_reels.empty: df_g_reels = pd.DataFrame(columns=["Profile Link", "Username", "Reel URL", "Shortcode", "Views", "Likes", "Comments", "Engagement Rate (%)", "Timestamp"])
+            if df_skip.empty: df_skip = pd.DataFrame(columns=["Profile Link", "Username", "Reel URL", "Shortcode", "Views", "Likes", "Comments", "Engagement Rate (%)", "Timestamp", "Skip Reason"])
+            
+            t_sum, t_reel, t_skip = st.tabs(["Profile Summaries", "Individual Reel Metrics with Views", "Skipped Reels Repository"])
+            with t_sum: st.dataframe(df_sum, use_container_width=True)
+            with t_reel: st.dataframe(df_g_reels, use_container_width=True)
+            with t_skip: st.dataframe(df_skip, use_container_width=True)
+            
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as w:
+                df_sum.to_excel(w, sheet_name="Profile Summary", index=False)
+                df_g_reels.to_excel(w, sheet_name="Reel Metrics", index=False)
+                df_skip.to_excel(w, sheet_name="Skipped Reels", index=False)
+            st.download_button(label="📥 Download Multi-Sheet Marketing Workbook", data=buf.getvalue(), file_name="batch_timeline_analytics.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# Centered bottom corporate logo styling asset
 if logo_base64:
     st.markdown(f'<div class="bottom-logo-container"><img src="data:image/jpeg;base64,{logo_base64}"></div>', unsafe_allow_html=True)
