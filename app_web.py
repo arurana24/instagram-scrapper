@@ -109,6 +109,44 @@ def fetch_creator_metadata_via_api(username):
     except Exception:
         return {"followers": 0, "full_name": "No Public Name", "status": "Connection Fail"}
 
+def fetch_single_link_metrics_via_api(username, shortcode):
+    """
+    Meta API Layer: Pulls accurate interaction metrics, post types, 
+    and publication timestamps straight from Meta.
+    """
+    if not username or not shortcode:
+        return None
+    url = f"{BASE_URL}/{INSTAGRAM_ACCOUNT_ID}"
+    query = f"business_discovery.username({username}){{media.limit(30){{id,like_count,comments_count,media_type,timestamp,permalink}}}}"
+    params = {"fields": query, "access_token": ACCESS_TOKEN}
+    try:
+        res = requests.get(url, params=params).json()
+        media_data = res.get("business_discovery", {}).get("media", {}).get("data", [])
+        for item in media_data:
+            item_permalink = item.get("permalink", "")
+            if shortcode in item_permalink or item.get("id") == shortcode:
+                # Format time string gracefully
+                raw_time = item.get("timestamp", "N/A")
+                formatted_time = raw_time
+                try:
+                    clean_time = re.sub(r'([+-]\d{4})$', '', raw_time)
+                    dt_obj = datetime.strptime(clean_time, "%Y-%m-%dT%H:%M:%S")
+                    formatted_time = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    pass
+                    
+                return {
+                    "Shortcode": shortcode,
+                    "Username": username,
+                    "Likes": item.get("like_count", 0),
+                    "Comments": item.get("comments_count", 0),
+                    "Timestamp": formatted_time,
+                    "Product Type": item.get("media_type", "VIDEO")
+                }
+        return None
+    except Exception:
+        return None
+
 def fetch_creator_timeline_via_api(username, profile_url):
     if not username:
         return {"followers": 0, "status": "Invalid Username", "reels_to_job": [], "skipped_pinned": []}
@@ -165,27 +203,22 @@ def fetch_creator_timeline_via_api(username, profile_url):
         return {"followers": 0, "status": "API Exception Connection", "reels_to_job": [], "skipped_pinned": []}
 
 def fetch_single_reel_views_worker(job):
+    """ Instaloader Worker: Solely handles view extraction with fallback metrics protection """
     permalink = job["permalink"]
     try:
         shortcode_match = re.search(r'/reel/([^/]+)/|/p/([^/]+)/', permalink)
         code = shortcode_match.group(1) or shortcode_match.group(2) if shortcode_match else job.get("post_id") or job.get("shortcode")
-        time.sleep(random.uniform(0.1, 0.25))
         
+        time.sleep(random.uniform(0.3, 0.8))
         post = instaloader.Post.from_shortcode(L.context, code)
         views = post.video_view_count if post.is_video else 0
         coauthors = [author.username for author in post.get_coauthors()] if hasattr(post, 'get_coauthors') else []
         status = "Skipped: Collaboration" if len(coauthors) > 1 else "Success"
         
         job.update({"Views": views, "Status": status, "Shortcode": code})
-        if "Timestamp" not in job or job["Timestamp"] == "N/A":
-            job["Timestamp"] = post.date_utc.strftime("%Y-%m-%d %H:%M:%S") if post.date_utc else "N/A"
-        if "Product Type" not in job:
-            job["Product Type"] = post.typename if post.typename else "VIDEO"
         return job
     except Exception:
         job.update({"Views": 0, "Status": "Valid (Views Fallback)", "Shortcode": job.get("post_id", "Error")})
-        if "Timestamp" not in job: job["Timestamp"] = "N/A"
-        if "Product Type" not in job: job["Product Type"] = "VIDEO"
         return job
 
 # ==========================================
@@ -235,20 +268,30 @@ if engine_selection == "Campaign Tracker":
                 
                 global_jobs = []
                 profile_cache = {}
+                api_metrics_cache = {}
                 
-                status_txt.text("Querying metadata frameworks via primary Meta API...")
+                status_txt.text("Querying metadata frameworks and interaction layers via primary Meta API...")
                 for idx, row in df.iterrows():
                     u_handle = extract_username_from_url(str(row[url_column]))
+                    shortcode = row['Shortcode_Temp']
+                    
                     if u_handle and u_handle not in profile_cache and inc_profiles:
                         profile_cache[u_handle] = fetch_creator_metadata_via_api(u_handle)
+                        
+                    # Fetch likes, comments, types, and timestamps entirely from Meta API
+                    if u_handle and shortcode:
+                        api_metrics = fetch_single_link_metrics_via_api(u_handle, shortcode)
+                        if api_metrics:
+                            api_metrics_cache[idx] = api_metrics
+                    
                     global_jobs.append({
-                        "index": idx, "permalink": row[url_column], "shortcode": row['Shortcode_Temp'], "user_handle": u_handle
+                        "index": idx, "permalink": row[url_column], "shortcode": shortcode, "user_handle": u_handle
                     })
                     p_bar.progress((idx + 1) / len(df) * 0.3)
                 
-                status_txt.text(f"Extracting specific metrics across {len(global_jobs)} indices...")
+                status_txt.text(f"Extracting view indices and play metrics cross-matrix...")
                 scraped_map = {}
-                with ThreadPoolExecutor(max_workers=30) as exec1:
+                with ThreadPoolExecutor(max_workers=10) as exec1:
                     futures = [exec1.submit(fetch_single_reel_views_worker, job) for job in global_jobs]
                     cc = 0
                     for f in as_completed(futures):
@@ -260,32 +303,35 @@ if engine_selection == "Campaign Tracker":
                 r_ids, users, f_names, followers, r_likes, r_comments, r_views, r_types, r_times, r_status = [], [], [], [], [], [], [], [], [], []
                 er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
                 
-               # Ensure this whole block stays neatly indented under the "with ThreadPoolExecutor" block above it
-                r_ids, users, f_names, followers, r_likes, r_comments, r_views, r_types, r_times, r_status = [], [], [], [], [], [], [], [], [], []
-                er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
-                
                 for i in range(len(df)):
-                    scr = scraped_map.get(i, {"Shortcode": "N/A", "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "VIDEO", "Timestamp": "N/A", "Status": "Fail"})
+                    scr = scraped_map.get(i, {"Shortcode": "N/A", "Username": "N/A", "Views": 0, "Status": "Fail"})
                     
-                    # Safe retrieval via .get() prevents future key crashes
-                    hand = scr.get("Username") if scr.get("Username") else scr.get("user_handle", "N/A")
+                    # Target correct handle fallback structure
+                    hand = scr.get("Username") if scr.get("Username") and scr["Username"] != "N/A" else scr.get("user_handle", "N/A")
                     c_meta = profile_cache.get(hand, {"followers": "N/A", "full_name": "No Public Name"})
                     
-                    r_ids.append(scr.get("Shortcode", "N/A"))
+                    # Gather official API data fallback variables safely
+                    meta_metric = api_metrics_cache.get(i, {"Likes": 0, "Comments": 0, "Timestamp": "N/A", "Product Type": "VIDEO"})
+                    
+                    r_ids.append(scr.get("Shortcode") if scr.get("Shortcode") else "N/A")
                     users.append(hand)
                     f_names.append(c_meta.get("full_name", "No Public Name"))
                     followers.append(c_meta.get("followers", "N/A"))
-                    r_likes.append(scr.get("Likes", 0))
-                    r_comments.append(scr.get("Comments", 0))
+                    
+                    likes_val = meta_metric["Likes"]
+                    comments_val = meta_metric["Comments"]
+                    r_likes.append(likes_val)
+                    r_comments.append(comments_val)
+                    
                     r_views.append(scr.get("Views", 0))
-                    r_types.append(scr.get("Product Type", "VIDEO"))
-                    r_times.append(scr.get("Timestamp", "N/A"))
+                    r_types.append(meta_metric["Product Type"])
+                    r_times.append(meta_metric["Timestamp"])
                     r_status.append(scr.get("Status", "Fail"))
                     
                     try:
-                        v = float(scr["Views"])
-                        l = float(scr["Likes"])
-                        c = float(scr["Comments"])
+                        v = float(scr.get("Views", 0))
+                        l = float(likes_val)
+                        c = float(comments_val)
                         er_list.append(f"{round(((l + c) / v * 100), 2)}%" if v > 0 else "0.0%")
                         ratio_list.append(round((l / v), 4) if v > 0 else 0.0)
                     except:
@@ -294,9 +340,9 @@ if engine_selection == "Campaign Tracker":
                     if inc_roi:
                         try:
                             cost = float(df.iloc[i]["Cost"])
-                            v = float(scr["Views"])
+                            v = float(scr.get("Views", 0))
                             cpv_list.append(round(cost / v, 4) if v > 0 else 0)
-                            cpe_list.append(round(cost / (float(scr["Likes"]) + float(scr["Comments"])), 4) if (float(scr["Likes"]) + float(scr["Comments"])) > 0 else 0)
+                            cpe_list.append(round(cost / (float(likes_val) + float(comments_val)), 4) if (float(likes_val) + float(comments_val)) > 0 else 0)
                         except:
                             cpv_list.append("N/A"), cpe_list.append("N/A")
 
@@ -362,7 +408,7 @@ else:
             completed_jobs = []
             if total_jobs > 0:
                 status_txt.text(f"Running high-speed processing array across {total_jobs} unique nodes...")
-                with ThreadPoolExecutor(max_workers=30) as final_exec:
+                with ThreadPoolExecutor(max_workers=10) as final_exec:
                     futures = [final_exec.submit(fetch_single_reel_views_worker, j) for j in global_jobs_pool]
                     jc = 0
                     for f in as_completed(futures):
