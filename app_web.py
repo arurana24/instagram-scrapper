@@ -261,9 +261,12 @@ if engine_selection == "Campaign Tracker":
                 er_list, ratio_list, cpv_list, cpe_list = [], [], [], []
                 
                 for i in range(len(df)):
-                    scr = scraped_map.get(i, {"Shortcode": "N/A", "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "VIDEO", "Timestamp": "N/A", "Status": "Fail"})
-                    hand = scr["Username"] if scr["Username"] != "N/A" else scr.get("user_handle", "N/A")
-                    c_meta = profile_cache.get(hand, {"followers": "N/A", "full_name": "No Public Name"})
+    scr = scraped_map.get(i, {"Shortcode": "N/A", "Username": "N/A", "Likes": 0, "Comments": 0, "Views": 0, "Product Type": "VIDEO", "Timestamp": "N/A", "Status": "Fail"})
+    
+    # Using .get() prevents the KeyError if a specific post fails to scrape
+    hand = scr.get("Username") if scr.get("Username") else scr.get("user_handle", "N/A")
+    
+    c_meta = profile_cache.get(hand, {"followers": "N/A", "full_name": "No Public Name"})
                     
                     r_ids.append(scr["Shortcode"])
                     users.append(hand)
